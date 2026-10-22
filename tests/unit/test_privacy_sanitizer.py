@@ -272,3 +272,22 @@ def test_split_yaml_frontmatter_requires_a_real_block():
         "---\nname: x\n---\n",
         "body\n",
     )
+
+
+async def test_generated_sidecar_metadata_is_not_sanitized():
+    # The L0 abstract is a frontmatter-free YAML mapping, so without an explicit
+    # rule the body pass rewrites identity (name/description) inside it.
+    catalog = _PrivacyCatalog({"skill": {"other": {"pg_user": "analytics"}}})
+    sanitizer = PrivacySanitizer(catalog)
+    abstract = "name: email-analytics\ndescription: analytics for email\ntags:\n- email\n"
+
+    sidecar = await sanitizer.sanitize(
+        abstract, ctx=_ctx(), uri="viking://user/alice/skills/email-analytics/.abstract.md"
+    )
+    assert sidecar.content == abstract
+
+    body = await sanitizer.sanitize(
+        abstract, ctx=_ctx(), uri="viking://user/alice/skills/email-analytics/SKILL.md"
+    )
+    assert body.content != abstract
+    assert "{{ov_privacy:" in body.content

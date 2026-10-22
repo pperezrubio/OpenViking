@@ -102,6 +102,15 @@ class PrivacySanitizer:
     ) -> PrivacySanitizationResult:
         if not content or self._is_privacy_storage_uri(uri, ctx):
             return PrivacySanitizationResult(content=content)
+        # Generated sidecars are metadata, not prose: the L0 abstract is a
+        # frontmatter-free YAML mapping (name/description/tags), so the
+        # body-only rule below cannot protect it, and sanitizing it rewrites
+        # identity - a skill whose name contains a literal registered elsewhere
+        # is stored as `name: <ref>` and stops matching its directory. Sidecars
+        # are sanitized where they are generated; the stored copy is written
+        # verbatim.
+        if uri.endswith(("/.abstract.md", "/.overview.md")):
+            return PrivacySanitizationResult(content=content)
         # Frontmatter is structured metadata: rewriting a value into a plain
         # scalar that starts with `{{` makes that scalar a YAML flow mapping, so
         # one substituted value can make the whole stored document (a SKILL.md,
