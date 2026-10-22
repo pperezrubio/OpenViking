@@ -5,9 +5,10 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from openviking.privacy.reference import build_privacy_field_reference
 from openviking.pyagfs import get_privacy_matcher_class
@@ -41,6 +42,24 @@ class PrivacySanitizationResult:
     @property
     def changed(self) -> bool:
         return bool(self.replacements)
+
+
+_REFERENCE_TOKEN = re.compile(r"\{\{ov_privacy:[^{}\r\n]*\}\}")
+
+
+def _apply_replacements(content: str, replacements: Sequence[tuple[int, int, str]]) -> str:
+    """Rebuild ``content`` applying only the given (start, end, reference) spans."""
+
+    out: list[str] = []
+    cursor = 0
+    for start, end, reference in sorted(replacements):
+        if start < cursor:
+            continue
+        out.append(content[cursor:start])
+        out.append(reference)
+        cursor = end
+    out.append(content[cursor:])
+    return "".join(out)
 
 
 class PrivacySanitizer:
@@ -109,6 +128,24 @@ class PrivacySanitizer:
             raw_ambiguous,
             match_limit_exceeded,
         ) = matcher.sanitize_limited(content, effective_max_replacements)
+        # Sanitization must be idempotent. A reference embeds the raw literal in
+        # its own path (privacy/<category>/<target>#/values/<field>), so a second
+        # pass over already-sanitized text matches inside the reference it has
+        # just inserted and nests reference into reference. Drop replacements
+        # that overlap an existing reference and rebuild the text from the
+        # original, leaving those spans untouched.
+        existing_references = tuple(_REFERENCE_TOKEN.finditer(content))
+        if existing_references:
+            kept = tuple(
+                item
+                for item in raw_replacements
+                if not any(
+                    item[0] < match.end() and match.start() < item[1]
+                    for match in existing_references
+                )
+            )
+            if len(kept) != len(raw_replacements):
+                rewritten = _apply_replacements(content, kept)
         if match_limit_exceeded and fail_on_match_limit:
             raise ResourceExhaustedError(
                 "Content exceeds the Privacy sanitizer replacement limit",

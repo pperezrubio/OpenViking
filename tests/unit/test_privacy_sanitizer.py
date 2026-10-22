@@ -233,3 +233,25 @@ async def test_sanitizer_never_rewrites_privacy_storage_itself():
     assert result.content == "secret"
     assert not result.changed
     assert catalog.build_reads == 0
+
+
+async def test_sanitize_is_idempotent_when_a_reference_embeds_its_literal():
+    # A reference carries the raw literal in its own path
+    # (privacy/skill/<target>#/values/<field>), so re-sanitizing already
+    # sanitized text must not match inside the reference it just inserted.
+    catalog = _PrivacyCatalog({"skill": {"mailserver": {"container_name": "mailserver"}}})
+    sanitizer = PrivacySanitizer(catalog)
+    uri = "viking://resources/demo/note.md"
+
+    first = await sanitizer.sanitize("run docker-mailserver\n", ctx=_ctx(), uri=uri)
+    assert first.content == (
+        "run docker-{{ov_privacy:alice:viking://~/privacy/skill/mailserver"
+        "#/values/container_name}}\n"
+    )
+
+    second = await sanitizer.sanitize(first.content, ctx=_ctx(), uri=uri)
+    third = await sanitizer.sanitize(second.content, ctx=_ctx(), uri=uri)
+
+    assert second.content == first.content
+    assert third.content == first.content
+    assert second.content.count("{{ov_privacy:") == 1
